@@ -1,323 +1,287 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 
-interface AnalysisResult {
-  difficulty?: {
-    titleMatches?: { exact: number; broad: number; partial: number; none: number; score: number };
-    competitors?: { count: number; score: number };
-    installs?: { avg: number; score: number };
-    rating?: { avg: number; score: number };
-    age?: { avgDaysSinceUpdated: number; score: number };
-    score?: number;
+interface ASOResponse {
+  keyword: string;
+  country: string;
+  language: string;
+  difficulty: {
+    overall: number;
+    titleMatches: {
+      exact: number;
+      broad: number;
+      partial: number;
+      none: number;
+    };
+    competitors: {
+      count: number;
+      strength: number;
+    };
   };
-  traffic?: {
-    suggest?: { score: number };
-    ranked?: { count: number; avgRank: number; score: number };
-    installs?: { avg: number; score: number };
-    length?: { length: number; score: number };
-    score?: number;
+  traffic: {
+    overall: number;
+    suggestions: number;
+    ranking: {
+      count: number;
+      avgRank: number;
+      score: number;
+    };
   };
-  suggestions?: string[];
-  [key: string]: any;
+  apps: Array<{
+    rank: number;
+    title: string;
+    appId: string;
+    icon: string;
+    score: number;
+    reviews: number;
+    summary: string;
+    installs: string;
+  }>;
+  suggestions: string[];
 }
 
 export default function GooglePlayASOAnalyzer() {
   const [keyword, setKeyword] = useState('');
-  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [country, setCountry] = useState('us');
   const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<ASOResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [history, setHistory] = useState<string[]>([]);
-  const [mounted, setMounted] = useState(false);
 
-  // Fix hydration mismatch by only rendering after mount
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const countries = [
+    { code: 'us', name: 'United States' },
+    { code: 'gb', name: 'United Kingdom' },
+    { code: 'ca', name: 'Canada' },
+    { code: 'au', name: 'Australia' },
+    { code: 'in', name: 'India' },
+    { code: 'de', name: 'Germany' },
+    { code: 'fr', name: 'France' },
+    { code: 'jp', name: 'Japan' },
+    { code: 'br', name: 'Brazil' },
+    { code: 'mx', name: 'Mexico' },
+  ];
 
-  // Load history from localStorage only on client (separate useEffect)
-  useEffect(() => {
-    if (mounted) {
-      const savedHistory = localStorage.getItem('aso-search-history');
-      if (savedHistory) {
-        try {
-          setHistory(JSON.parse(savedHistory));
-        } catch (e) {
-          console.error('Failed to parse history', e);
-        }
-      }
-    }
-  }, [mounted]);
-
-  // Save history to localStorage when it changes
-  useEffect(() => {
-    if (mounted && history.length > 0) {
-      localStorage.setItem('aso-search-history', JSON.stringify(history));
-    }
-  }, [history, mounted]);
-
-  const analyzeKeyword = async (searchTerm: string = keyword) => {
-    if (!searchTerm.trim()) return;
+  const analyzeKeyword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!keyword.trim()) return;
 
     setLoading(true);
     setError(null);
+    setData(null);
 
     try {
-      const response = await fetch('/api/aso/analyze', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ keyword: searchTerm }),
+      const params = new URLSearchParams({
+        keyword: keyword.trim(),
+        country,
+        language: 'en' // You could add language selection too
       });
 
+      const response = await fetch(`/api/aso/analyze?${params}`);
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({
-          error: `HTTP error ${response.status}`
-        }));
-        throw new Error(errorData.error || 'Failed to analyze keyword');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Analysis failed');
       }
 
       const result = await response.json();
-      setAnalysis(result);
-
-      // Update history
-      setHistory(prev => {
-        const newHistory = [searchTerm, ...prev.filter(k => k !== searchTerm)].slice(0, 5);
-        return newHistory;
-      });
-
+      setData(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unknown error occurred');
+      setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    analyzeKeyword();
+  // Helper to get color based on score
+  const getScoreColor = (score: number) => {
+    if (score < 30) return 'text-green-600';
+    if (score < 60) return 'text-yellow-600';
+    return 'text-red-600';
   };
-
-  const formatNumber = (num: number | undefined): string => {
-    if (num === undefined) return 'N/A';
-    if (num > 1000000) return `${(num / 1000000).toFixed(1)}M`;
-    if (num > 1000) return `${(num / 1000).toFixed(1)}K`;
-    return num.toString();
-  };
-
-  // Return a consistent loading skeleton for server and first client render
-  if (!mounted) {
-    return (
-      <div className="min-h-screen bg-gray-800 py-12 px-4">
-        <div className="max-w-4xl mx-auto">
-          {/* Header Skeleton */}
-          <div className="text-center mb-8">
-            <div className="h-8 bg-gray-700 rounded w-64 mx-auto mb-2 animate-pulse"></div>
-            <div className="h-4 bg-gray-700 rounded w-96 mx-auto animate-pulse"></div>
-          </div>
-
-          {/* Search Form Skeleton */}
-          <div className="mb-8">
-            <div className="flex gap-3 max-w-2xl mx-auto">
-              <div className="flex-1 h-12 bg-gray-700 rounded-lg animate-pulse"></div>
-              <div className="w-[120px] h-12 bg-gray-700 rounded-lg animate-pulse"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <div className="min-h-screen bg-gray-800 py-12 px-4">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-screen bg-gray-900 py-12 px-4">
+      <div className="max-w-6xl mx-auto">
         {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">
+        <div className="text-center mb-10">
+          <h1 className="text-4xl font-bold text-white mb-3">
             Google Play ASO Analyzer
           </h1>
-          <p className="text-gray-300">
-            Powered by Next.js API Routes + aso-v2
+          <p className="text-gray-400 text-lg">
+            Analyze keyword difficulty, search volume, and competitor apps
           </p>
         </div>
 
-        {/* Search History */}
-        {history.length > 0 && (
-          <div className="mb-4 flex justify-center gap-2 flex-wrap">
-            {history.map((term, idx) => (
-              <button
-                key={`${term}-${idx}`}
-                onClick={() => {
-                  setKeyword(term);
-                  analyzeKeyword(term);
-                }}
-                className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-full shadow-sm transition-colors"
-              >
-                {term}
-              </button>
-            ))}
-          </div>
-        )}
-
         {/* Search Form */}
-        <form onSubmit={handleSubmit} className="mb-8">
-          <div className="flex gap-3 max-w-2xl mx-auto">
-            <input
-              type="text"
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              placeholder="Enter a keyword (e.g., fitness app, meditation)"
-              className="flex-1 px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm placeholder-gray-400"
-              disabled={loading}
-            />
+        <div className="bg-gray-800 rounded-xl shadow-lg p-6 mb-8 border border-gray-700">
+          <form onSubmit={analyzeKeyword} className="flex flex-col md:flex-row gap-4">
+            <div className="flex-1">
+              <input
+                type="text"
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+                placeholder="Enter a keyword (e.g., fitness app)"
+                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={loading}
+              />
+            </div>
+
+            <div className="w-full md:w-48">
+              <select
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={loading}
+              >
+                {countries.map(c => (
+                  <option key={c.code} value={c.code}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+
             <button
               type="submit"
               disabled={loading || !keyword.trim()}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-600 transition-colors min-w-[120px] font-medium shadow-sm"
+              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
             >
               {loading ? (
-                <span className="flex items-center justify-center">
-                  <svg className="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                <span className="flex items-center">
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
-                  Loading
+                  Analyzing...
                 </span>
-              ) : 'Analyze'}
+              ) : 'Analyze Keyword'}
             </button>
-          </div>
-        </form>
+          </form>
+        </div>
 
-        {/* Error Display */}
+        {/* Error Message */}
         {error && (
-          <div className="mb-6 p-4 bg-red-900/50 border border-red-700 rounded-lg max-w-2xl mx-auto">
-            <p className="text-red-200 font-medium">Error: {error}</p>
-            <p className="text-red-300 text-sm mt-1">Please try again with a different keyword</p>
+          <div className="bg-red-900/50 border border-red-700 text-red-200 px-6 py-4 rounded-lg mb-8">
+            <p className="font-semibold">Error</p>
+            <p>{error}</p>
           </div>
         )}
 
         {/* Results */}
-        {analysis && (
-          <div className="bg-gray-900 rounded-xl shadow-lg p-6 animate-fadeIn border border-gray-700">
-            {/* Difficulty Section */}
-            {analysis.difficulty && (
-              <div className="mb-6">
-                <h2 className="text-xl font-semibold text-white mb-3">Difficulty Analysis</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {analysis.difficulty.titleMatches && (
-                    <div className="bg-gray-800 p-3 rounded-lg">
-                      <p className="text-sm text-gray-400">Title Matches</p>
-                      <p className="text-lg font-semibold text-white">
-                        {analysis.difficulty.titleMatches.score?.toFixed(1) ?? 'N/A'}/10
-                      </p>
-                    </div>
-                  )}
-                  {analysis.difficulty.competitors && (
-                    <div className="bg-gray-800 p-3 rounded-lg">
-                      <p className="text-sm text-gray-400">Competitors</p>
-                      <p className="text-lg font-semibold text-white">
-                        {analysis.difficulty.competitors.count ?? 'N/A'}
-                      </p>
-                    </div>
-                  )}
-                  {analysis.difficulty.installs && (
-                    <div className="bg-gray-800 p-3 rounded-lg">
-                      <p className="text-sm text-gray-400">Avg Installs</p>
-                      <p className="text-lg font-semibold text-white">
-                        {formatNumber(analysis.difficulty.installs.avg)}
-                      </p>
-                    </div>
-                  )}
+        {data && (
+          <div className="space-y-8">
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Difficulty Card */}
+              <div className="bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-700">
+                <h3 className="text-gray-400 text-sm font-semibold uppercase mb-2">
+                  Keyword Difficulty
+                </h3>
+                <div className="flex items-end gap-3">
+                  <span className={`text-4xl font-bold ${getScoreColor(data.difficulty.overall)}`}>
+                    {data.difficulty.overall}
+                  </span>
+                  <span className="text-gray-400 mb-1">/100</span>
+                </div>
+                <p className="text-gray-400 text-sm mt-2">
+                  {data.difficulty.competitors.count} apps competing
+                </p>
+                <div className="mt-4">
+                  <div className="flex justify-between text-sm text-gray-400 mb-1">
+                    <span>Title Matches:</span>
+                    <span className="text-white">{data.difficulty.titleMatches.exact} exact, {data.difficulty.titleMatches.broad} broad</span>
+                  </div>
                 </div>
               </div>
-            )}
 
-            {/* Traffic Section */}
-            {analysis.traffic && (
-              <div className="mb-6">
-                <h2 className="text-xl font-semibold text-white mb-3">Traffic Analysis</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {analysis.traffic.ranked && (
-                    <div className="bg-gray-800 p-3 rounded-lg">
-                      <p className="text-sm text-gray-400">Ranked Keywords</p>
-                      <p className="text-lg font-semibold text-white">
-                        {analysis.traffic.ranked.count ?? 'N/A'}
-                      </p>
-                    </div>
-                  )}
-                  {analysis.traffic.installs && (
-                    <div className="bg-gray-800 p-3 rounded-lg">
-                      <p className="text-sm text-gray-400">Traffic Installs</p>
-                      <p className="text-lg font-semibold text-white">
-                        {formatNumber(analysis.traffic.installs.avg)}
-                      </p>
-                    </div>
-                  )}
-                  {analysis.traffic.length && (
-                    <div className="bg-gray-800 p-3 rounded-lg">
-                      <p className="text-sm text-gray-400">Keyword Length</p>
-                      <p className="text-lg font-semibold text-white">
-                        {analysis.traffic.length.length ?? 'N/A'} chars
-                      </p>
-                    </div>
-                  )}
+              {/* Traffic Card */}
+              <div className="bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-700">
+                <h3 className="text-gray-400 text-sm font-semibold uppercase mb-2">
+                  Search Volume
+                </h3>
+                <div className="flex items-end gap-3">
+                  <span className={`text-4xl font-bold ${getScoreColor(data.traffic.overall)}`}>
+                    {data.traffic.overall}
+                  </span>
+                  <span className="text-gray-400 mb-1">/100</span>
+                </div>
+                <p className="text-gray-400 text-sm mt-2">
+                  {data.suggestions.length} keyword suggestions
+                </p>
+                <div className="mt-4">
+                  <div className="flex justify-between text-sm text-gray-400 mb-1">
+                    <span>Ranking apps:</span>
+                    <span className="text-white">{data.traffic.ranking.count}</span>
+                  </div>
                 </div>
               </div>
-            )}
 
-            {/* Overall Scores */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              {analysis.difficulty?.score !== undefined && (
-                <div className="bg-gradient-to-br from-purple-900 to-purple-800 p-4 rounded-lg">
-                  <h3 className="text-sm text-purple-200 mb-1">Overall Difficulty</h3>
-                  <p className="text-2xl font-bold text-white">
-                    {analysis.difficulty.score.toFixed(1)}/10
-                  </p>
+              {/* Suggestions Card */}
+              <div className="bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-700">
+                <h3 className="text-gray-400 text-sm font-semibold uppercase mb-2">
+                  Related Keywords
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {data.suggestions.slice(0, 6).map((suggestion, i) => (
+                    <span key={i} className="px-2 py-1 bg-gray-700 text-gray-300 text-sm rounded">
+                      {suggestion}
+                    </span>
+                  ))}
+                  {data.suggestions.length > 6 && (
+                    <span className="px-2 py-1 bg-gray-700 text-gray-300 text-sm rounded">
+                      +{data.suggestions.length - 6} more
+                    </span>
+                  )}
                 </div>
-              )}
-              {analysis.traffic?.score !== undefined && (
-                <div className="bg-gradient-to-br from-blue-900 to-blue-800 p-4 rounded-lg">
-                  <h3 className="text-sm text-blue-200 mb-1">Overall Traffic</h3>
-                  <p className="text-2xl font-bold text-white">
-                    {analysis.traffic.score.toFixed(1)}/10
-                  </p>
-                </div>
-              )}
+                <button
+                  onClick={() => setKeyword(data.suggestions[0])}
+                  className="mt-4 text-blue-400 hover:text-blue-300 text-sm"
+                >
+                  Try one →
+                </button>
+              </div>
             </div>
 
-            {/* Keyword Suggestions */}
-            {analysis.suggestions && analysis.suggestions.length > 0 && (
-              <div className="border-t border-gray-700 pt-4">
-                <h3 className="font-semibold text-white mb-3">Related Keywords</h3>
-                <div className="flex flex-wrap gap-2">
-                  {analysis.suggestions.slice(0, 15).map((suggestion, idx) => (
-                    <button
-                      key={`${suggestion}-${idx}`}
-                      onClick={() => {
-                        setKeyword(suggestion);
-                        analyzeKeyword(suggestion);
-                      }}
-                      className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-full text-sm transition-all border border-gray-700"
-                    >
-                      {suggestion}
-                    </button>
-                  ))}
-                </div>
+            {/* Ranking Apps Table */}
+            <div className="bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-700">
+              <h2 className="text-xl font-semibold text-white mb-4">
+                Top Apps Ranking for "{data.keyword}"
+              </h2>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-700">
+                      <th className="text-left py-3 px-4 text-gray-400 font-semibold">Rank</th>
+                      <th className="text-left py-3 px-4 text-gray-400 font-semibold">App</th>
+                      <th className="text-left py-3 px-4 text-gray-400 font-semibold">Rating</th>
+                      <th className="text-left py-3 px-4 text-gray-400 font-semibold">Reviews</th>
+                      <th className="text-left py-3 px-4 text-gray-400 font-semibold">Installs</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.apps.slice(0, 15).map((app) => (
+                      <tr key={app.appId} className="border-b border-gray-700 hover:bg-gray-750">
+                        <td className="py-3 px-4 text-white font-mono">{app.rank}</td>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-3">
+                            {app.icon && (
+                              <img src={app.icon} alt={app.title} className="w-8 h-8 rounded" />
+                            )}
+                            <div>
+                              <div className="text-white font-medium">{app.title}</div>
+                              <div className="text-gray-400 text-sm">{app.appId}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="text-yellow-400 font-semibold">{app.score.toFixed(1)}</span>
+                        </td>
+                        <td className="py-3 px-4 text-gray-300">{app.reviews.toLocaleString()}</td>
+                        <td className="py-3 px-4 text-gray-300">{app.installs}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            )}
-
-            {/* Raw Data (optional) */}
-            <details className="mt-4 text-sm">
-              <summary className="cursor-pointer text-gray-400 hover:text-white">
-                View Raw JSON Data
-              </summary>
-              <div className="mt-2 overflow-x-auto">
-                <pre className="bg-gray-950 text-gray-300 p-4 rounded-lg text-xs border border-gray-700">
-                  {JSON.stringify(analysis, null, 2)}
-                </pre>
-              </div>
-            </details>
+            </div>
           </div>
         )}
       </div>
